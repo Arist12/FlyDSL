@@ -98,15 +98,35 @@ def WMMA(m, n, k, elem_ty_ab, elem_ty_acc=None):
     )
 
 
-def make_buffer_tensor(tensor: Tensor, max_size: bool = True) -> Tensor:
+def make_buffer_tensor(
+    tensor: Tensor,
+    max_size: bool = True,
+    *,
+    num_records_bytes=None,
+) -> Tensor:
+    """Wrap ``tensor`` in a buffer-resource view for hardware OOB-checked
+    loads / stores.
+
+    ``max_size=True`` (default) sets the descriptor to ``0xFFFFFFFF``.
+    Pass ``num_records_bytes`` when the byte count is a compile-time
+    constant (folds to a constant in IR).  Otherwise with ``max_size=False``
+    it is derived at runtime from ``cosize(layout) * elem_bytes``.
+    """
     elem_ty = tensor.element_type
 
     ptr = get_iter(tensor)
     layout = get_layout(tensor)
 
-    if max_size:
-        MAX_BUFFER_SIZE = 0xFFFFFFFF
-        num_records_bytes = Int64(MAX_BUFFER_SIZE)
+    if num_records_bytes is not None:
+        # Coerce to i64: ROCDL make.buffer.rsrc requires an i64 num_records
+        # operand.  Int64(...) handles Python int, other fx Integer types
+        # (e.g. fx.Int32(M) * N), and raw ir.Value with i32/index/float types
+        # -- emitting the appropriate extension / cast.  Idempotent when the
+        # input is already Int64.
+        if not isinstance(num_records_bytes, Int64):
+            num_records_bytes = Int64(num_records_bytes)
+    elif max_size:
+        num_records_bytes = Int64(0xFFFFFFFF)
     else:
         elem_bits = elem_ty.width
         if elem_bits % 8 == 0:
