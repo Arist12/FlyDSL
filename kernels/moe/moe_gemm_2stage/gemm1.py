@@ -73,7 +73,13 @@ def _build_moe_gemm1_fp8_gateup(
     )
 
     in_t = elem_t
-    a_lds_size = BM * TILE_K
+    _val_per_thr = 16 // elem_bytes  # elements per 128b buffer_load (fp8=16)
+    _swz_params = (3, 4, 3)  # A-LDS swizzle, 8-bit fp8 (matches preshuffle_gemm)
+    _thrs_k = TILE_K // _val_per_thr
+    _thrs_m = 256 // _thrs_k
+    _m_per_wave = _thrs_m // 4
+    # The A copy writes _thrs_m rows per K-tile: 32 at tile_k=128, more than BM on decode.
+    a_lds_size = max(BM, _thrs_m) * TILE_K
 
     @fx.struct
     class GemmBuffers:
@@ -84,12 +90,6 @@ def _build_moe_gemm1_fp8_gateup(
     class SharedStorage:
         sorted_lds: fx.Array[fx.Int32, 256, 16]
         gemm: GemmBuffers
-
-    _val_per_thr = 16 // elem_bytes  # elements per 128b buffer_load (fp8=16)
-    _swz_params = (3, 4, 3)  # A-LDS swizzle, 8-bit fp8 (matches preshuffle_gemm)
-    _thrs_k = TILE_K // _val_per_thr
-    _thrs_m = 256 // _thrs_k
-    _m_per_wave = _thrs_m // 4
 
     def _gemm_1x4(blk_n, arg_p_input, arg_p_weight, lds, M, expert_id):
         """B-first native-fp8 gate/up GEMM with A-gather + LDS ping-pong."""

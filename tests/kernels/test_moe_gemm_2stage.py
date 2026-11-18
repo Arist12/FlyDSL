@@ -409,6 +409,28 @@ def test_moe_gemm1_numeric(in_dtype, out_dtype, tile_m, tokens):
 
 
 @_requires_fp8
+def test_moe_gemm1_decode_tile_k128_every_element():
+    """Decode (tile_m=16) at tile_k=128 with many K-tiles, every element against the reference.
+
+    The A copy writes 32 rows per K-tile. When the A buffers held only tile_m=16 rows, rows 16-31 landed in
+    the other ping-pong buffer while other waves could still read it, and on MI350X a few output tiles came
+    out wrong on every call at this shape, with the cosine still above 0.99.
+    """
+    out, ref = _run_gemm1(
+        tokens=64,
+        model_dim=1792,
+        inter_dim=192,
+        experts=256,
+        topk=8,
+        tile_m=16,
+        tile_n=64,
+        tile_k=128,
+        out_dtype="bf16",
+    )
+    torch.testing.assert_close(out.float(), ref, rtol=2**-7, atol=1e-3)
+
+
+@_requires_fp8
 def test_moe_gemm1_int4_perturb():
     """W4A8 de-interleave order is load-bearing: swapping the low/high nibble halves
     of every packed byte (which re-orders the in-kernel unpack's even={v0..v3} /
